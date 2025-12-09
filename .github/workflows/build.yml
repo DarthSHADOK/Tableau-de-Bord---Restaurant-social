@@ -1,0 +1,42 @@
+name: Build Application Windows
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11' 
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pyinstaller
+
+    # 1. COMPILATION EN MODE DOSSIER (--onedir)
+    # Cela crée un dossier "dist/GestionResto/" contenant l'exe et les libs.
+    - name: Build with PyInstaller
+      run: |
+        pyinstaller --onedir --noconsole --name GestionResto --add-data "Images;Images" --add-data "db;db" main.py
+
+    # 2. RELEASE : ON NE PREND QUE LE .EXE
+    # On va chercher le fichier spécifiquement à l'intérieur du dossier créé
+    - name: Release
+      uses: softprops/action-gh-release@v1
+      if: startsWith(github.ref, 'refs/tags/')
+      with:
+        # C'est ici la subtilité : on ne prend PAS tout le dossier, juste l'exe léger
+        files: dist/GestionResto/GestionResto.exe
