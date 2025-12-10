@@ -1,0 +1,97 @@
+name: Build GestionResto (Final Structure)
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Python (Using 3.14 for consistency)
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      # ====================================================================
+      # 1. BUILD GestionResto (onedir)
+      # This creates: dist/GestionResto/GestionResto.exe (plus all supporting files)
+      # ====================================================================
+      - name: Build GestionResto.exe
+        run: |
+          pyinstaller --noconsole --onedir --name GestionResto --distpath dist/GestionResto main.py
+
+      # ====================================================================
+      # 2. BUILD updater (onedir)
+      # This creates: dist/updater/updater.exe (plus its supporting files)
+      # ====================================================================
+      - name: Build Updater.exe
+        run: |
+          pyinstaller --noconsole --onedir --name updater --distpath dist/updater updater.py
+
+      # ====================================================================
+      # 3. ASSEMBLY: create Systeme folder and move everything except the main exe
+      # Put all assets, DLLs and updater.exe into dist/GestionResto/Systeme
+      # ====================================================================
+      - name: Merge files into Systeme folder
+        shell: powershell
+        run: |
+          $Root = "dist/GestionResto"
+          $Systeme = Join-Path $Root "Systeme"
+          $UpdaterDist = "dist/updater"
+
+          # Ensure Systeme exists
+          New-Item -ItemType Directory -Path $Systeme -Force | Out-Null
+
+          # Move everything from dist/GestionResto into Systeme except the main exe and the Systeme folder itself
+          Get-ChildItem -Path $Root -Force | Where-Object {
+            $_.Name -ne "GestionResto.exe" -and $_.Name -ne "Systeme"
+          } | ForEach-Object {
+            Move-Item -Path $_.FullName -Destination $Systeme -Force
+          }
+
+          # Copy updater contents (exe + libs) into Systeme
+          if (Test-Path $UpdaterDist) {
+            Copy-Item -Path (Join-Path $UpdaterDist "*") -Destination $Systeme -Recurse -Force
+            # Remove the temporary updater dist folder
+            Remove-Item -Path $UpdaterDist -Recurse -Force
+          } else {
+            Write-Host "Warning: dist/updater not found, skipping updater merge."
+          }
+
+      # ====================================================================
+      # 4. Hide Systeme folder (optional per your request)
+      # ====================================================================
+      - name: Hide Systeme Folder
+        shell: powershell
+        run: |
+          attrib +h "dist/GestionResto/Systeme"
+
+      # ====================================================================
+      # 5. ZIP the result (GestionResto.exe + Systeme folder at root of zip)
+      # ====================================================================
+      - name: Create Clean ZIP (Exe + Systeme at Root)
+        shell: powershell
+        run: |
+          Set-Location dist/GestionResto
+          Compress-Archive -Path * -DestinationPath ../GestionResto.zip -Force
+          Set-Location ../../
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: GestionResto.zip
+          path: dist/GestionResto.zip
