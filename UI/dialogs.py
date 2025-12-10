@@ -1,30 +1,31 @@
 import sqlite3
 import random
 import os
+import sys
+import subprocess
+import shutil
+import glob
 from datetime import datetime
+
 from Core.workers import UpdateWorker
 
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, 
     QLineEdit, QTextEdit, QPlainTextEdit, QComboBox, 
     QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView, 
-    QGridLayout, QFileDialog, QFrame, QMessageBox, QSizePolicy, QLayout
+    QGridLayout, QFileDialog, QFrame, QMessageBox, QSizePolicy, QLayout,
+    QCheckBox 
 )
 from PyQt6.QtCore import Qt, QTimer, QSize, QEvent
 from PyQt6.QtGui import QMovie, QPixmap, QIcon
 
-# --- IMPORTS LOCAUX ---
 import database as db
 from constants import (
     AppColors, DB_FILE, SHADOK_GIF_PATH, APP_VERSION, PDF_FILENAME
 )
 
-# === CORRECTION MAJEURE ICI : UI en majuscules ===
 from UI.widgets import ModernButton, ToggleSwitch
 
-# ============================================================================
-# CLASSE DE BASE
-# ============================================================================
 class BaseDialog(QDialog):
     def __init__(self, parent, title=None, w=None, h=None):
         super().__init__(parent)
@@ -39,11 +40,8 @@ class BaseDialog(QDialog):
         self.layout.setContentsMargins(25, 25, 25, 25)
         self.layout.setSpacing(15)
 
-# ============================================================================
-# DIALOGUES INFORMATIFS & CONFIRMATION
-# ============================================================================
 class CustomMessageBox(BaseDialog):
-    def __init__(self, parent, title, message, error=False):
+    def __init__(self, parent, title, message, error=False, success=False):
         super().__init__(parent, title, 400, 200)
         
         lbl_msg = QLabel(message)
@@ -54,14 +52,18 @@ class CustomMessageBox(BaseDialog):
         self.layout.addStretch()
         
         h_btns = QHBoxLayout()
-        if not error:
+        
+        if success:
+            btn_ok = ModernButton("OK", "#27ae60", self.accept, 35, 6)
+            h_btns.addWidget(btn_ok)
+        elif error:
+            btn_ok = ModernButton("OK", "#e74c3c", self.accept, 35, 6)
+            h_btns.addWidget(btn_ok)
+        else:
             btn_no = ModernButton("NON", "#95a5a6", self.reject, 35, 6)
             btn_yes = ModernButton("OUI", "#27ae60", self.accept, 35, 6)
             h_btns.addWidget(btn_no)
             h_btns.addWidget(btn_yes)
-        else:
-            btn_ok = ModernButton("OK", "#e74c3c", self.accept, 35, 6)
-            h_btns.addWidget(btn_ok)
         
         self.layout.addLayout(h_btns)
 
@@ -100,25 +102,19 @@ class ChangelogDialog(BaseDialog):
     def __init__(self, parent, version, text):
         super().__init__(parent, f"Quoi de neuf en v{version} ?", 500, 400)
         
-        # TITRE
         lbl_title = QLabel("🎉 MISE À JOUR EFFECTUÉE !")
         lbl_title.setStyleSheet(f"font-size: 14pt; font-weight: bold; color: {AppColors.BTN_NEW_BG};")
         lbl_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.layout.addWidget(lbl_title)
         
-        # SOUS-TITRE
         lbl_sub = QLabel(f"Voici les nouveautés de la version {version} :")
         lbl_sub.setStyleSheet(f"color: {AppColors.STATS_BG}; font-style: italic;")
         self.layout.addWidget(lbl_sub)
         
-        # ZONE DE TEXTE
         self.txt_display = QTextEdit()
         self.txt_display.setReadOnly(True)
         self.txt_display.setPlainText(text)
         
-        # STYLE CORRIGÉ :
-        # On définit explicitement que le focus garde la couleur SEARCH_BORDER (gris)
-        # pour annuler l'effet orange global.
         self.txt_display.setStyleSheet(f"""
             QTextEdit {{ 
                 background-color: white; 
@@ -135,13 +131,9 @@ class ChangelogDialog(BaseDialog):
         """)
         self.layout.addWidget(self.txt_display)
         
-        # BOUTON
         btn_ok = ModernButton("SUPER !", AppColors.BTN_NEW_BG, self.accept, 40, 6)
         self.layout.addWidget(btn_ok)
 
-# ============================================================================
-# DIALOGUE "À PROPOS"
-# ============================================================================
 class AProposDialog(BaseDialog):
     def __init__(self, parent, update_available=None, download_callback=None):
         super().__init__(parent, "À Propos", 420, 650)
@@ -149,7 +141,6 @@ class AProposDialog(BaseDialog):
         self.layout.setContentsMargins(30, 30, 30, 30)
         self.layout.setSpacing(0)
         
-        # --- Image Shadok (Inchangé) ---
         self.img_container = QLabel()
         self.img_container.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.img_container.setFixedSize(340, 250)
@@ -168,12 +159,10 @@ class AProposDialog(BaseDialog):
         h_img = QHBoxLayout(); h_img.addStretch(); h_img.addWidget(self.img_container); h_img.addStretch()
         self.layout.addLayout(h_img); self.layout.addSpacing(25)
         
-        # --- Titre (Inchangé) ---
         lbl_title = QLabel(f"<div style='line-height: 120%;'><span style='font-size: 16pt; font-weight: 800; color: {AppColors.MENU_BG};'>TABLEAU DE BORD</span><br><span style='font-size: 13pt; font-weight: 600; color: {AppColors.STATS_BG};'>RESTAURANT SOCIAL</span></div>")
         lbl_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.layout.addWidget(lbl_title); self.layout.addSpacing(15)
         
-        # --- Sélecteur de Canal (Inchangé) ---
         lbl_channel = QLabel("Canal de mise à jour :")
         lbl_channel.setStyleSheet("color: #7f8c8d; font-size: 10pt;")
         
@@ -191,26 +180,22 @@ class AProposDialog(BaseDialog):
         h_chan = QHBoxLayout(); h_chan.addStretch(); h_chan.addWidget(lbl_channel); h_chan.addWidget(self.combo_channel); h_chan.addStretch()
         self.layout.addLayout(h_chan); self.layout.addSpacing(15)
         
-        # --- Version et Boutons (MODIFIÉ POUR ÊTRE DYNAMIQUE) ---
         h_ver = QHBoxLayout(); h_ver.setSpacing(10); h_ver.addStretch()
         
-        # On garde le label de version en mémoire pour afficher "Recherche..."
         self.lbl_ver = QLabel(f"Version {APP_VERSION}")
         self.lbl_ver.setStyleSheet("background-color: #ecf0f1; color: #7f8c8d; border-radius: 10px; padding: 4px 15px; font-size: 10pt; font-weight: bold;")
         h_ver.addWidget(self.lbl_ver)
         
-        ### NOUVEAU : On crée les widgets MAIS on les cache si pas besoin
         self.lbl_arrow = QLabel("➜")
         self.lbl_arrow.setStyleSheet("color: #95a5a6; font-size: 14pt; font-weight: bold;")
         h_ver.addWidget(self.lbl_arrow)
         
-        self.btn_update = QPushButton("") # Texte vide pour l'instant
+        self.btn_update = QPushButton("") 
         self.btn_update.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_update.setStyleSheet(f"background-color: {AppColors.BTN_NEW_BG}; color: white; border-radius: 10px; padding: 4px 15px; font-size: 10pt; font-weight: bold; border: none;")
         self.btn_update.clicked.connect(self.start_download)
         h_ver.addWidget(self.btn_update)
         
-        # Gestion de l'état initial
         if update_available:
             self.btn_update.setText(f"v{update_available}")
             self.lbl_arrow.setVisible(True)
@@ -221,11 +206,9 @@ class AProposDialog(BaseDialog):
             
         h_ver.addStretch(); self.layout.addLayout(h_ver); self.layout.addSpacing(20)
         
-        # --- Barre de progression (Inchangé) ---
         self.progress_bar = QLabel(""); self.progress_bar.setAlignment(Qt.AlignmentFlag.AlignCenter); self.progress_bar.setStyleSheet("color: #27ae60; font-weight: bold;"); self.progress_bar.setVisible(False)
         self.layout.addWidget(self.progress_bar); sep = QFrame(); sep.setFixedHeight(1); sep.setStyleSheet("background-color: #e0e0e0;"); self.layout.addWidget(sep); self.layout.addSpacing(15)
         
-        # --- Crédits (Inchangé) ---
         v_credits = QVBoxLayout(); v_credits.setSpacing(4)
         lbl_dev = QLabel("Développement & Conception"); lbl_dev.setStyleSheet("color: #95a5a6; font-size: 8pt; text-transform: uppercase; letter-spacing: 1px;"); lbl_dev.setAlignment(Qt.AlignmentFlag.AlignCenter)
         lbl_dev_name = QLabel("SHaDoK"); lbl_dev_name.setStyleSheet(f"color: {AppColors.MENU_BG}; font-size: 11pt; font-weight: bold; margin-bottom: 2px;"); lbl_dev_name.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -237,41 +220,27 @@ class AProposDialog(BaseDialog):
         
         self.shake_timer = QTimer(self); self.shake_timer.timeout.connect(self.do_shake); self.shake_duration_timer = QTimer(self); self.shake_duration_timer.setSingleShot(True); self.shake_duration_timer.timeout.connect(self.stop_shake); self.start_vibration_sequence()
 
-    ### NOUVEAU : Logique de mise à jour instantanée ###
-    
     def on_channel_change(self, index):
-        """Sauvegarde ET lance la recherche instantanément"""
         channel = 'beta' if index == 1 else 'stable'
         db.set_config('UPDATE_CHANNEL', channel)
-        
-        # 1. On cache les anciens boutons et on montre que ça cherche
         self.lbl_arrow.setVisible(False)
         self.btn_update.setVisible(False)
         self.lbl_ver.setText("Recherche en cours...")
         self.lbl_ver.setStyleSheet("background-color: #f39c12; color: white; border-radius: 10px; padding: 4px 15px; font-size: 10pt; font-weight: bold;")
-        
-        # 2. On lance un worker temporaire juste pour cette fenêtre
         self.temp_worker = UpdateWorker(channel=channel)
         self.temp_worker.update_available.connect(self.on_new_version_found)
         self.temp_worker.finished.connect(self.on_search_finished)
         self.temp_worker.start()
 
     def on_new_version_found(self, version):
-        """Si le worker trouve une version"""
         self.lbl_arrow.setVisible(True)
         self.btn_update.setText(f"v{version}")
         self.btn_update.setVisible(True)
 
     def on_search_finished(self):
-        """Quand la recherche est finie (trouvé ou pas)"""
-        # On remet le texte normal de la version
         self.lbl_ver.setText(f"Version {APP_VERSION}")
         self.lbl_ver.setStyleSheet("background-color: #ecf0f1; color: #7f8c8d; border-radius: 10px; padding: 4px 15px; font-size: 10pt; font-weight: bold;")
-        
-        # Note : Si 'on_new_version_found' a été appelé avant, le bouton restera visible.
-        # Sinon, il restera caché. C'est le comportement voulu.
 
-    # --- Méthodes existantes (Inchangées) ---
     def start_download(self): self.progress_bar.setVisible(True); self.progress_bar.setText("Initialisation..."); self.download_callback(self) if self.download_callback else None
     def update_progress(self, percent): self.progress_bar.setText(f"Téléchargement : {percent}%")
     def eventFilter(self, source, event): 
@@ -282,9 +251,6 @@ class AProposDialog(BaseDialog):
     def do_shake(self): range_px = 4; x_off = random.randint(-range_px, range_px); y_off = random.randint(-range_px, range_px); self.img_container.setStyleSheet(f"QLabel {{ background-color: white; border-radius: 12px; border: 1px solid #ecf0f1; padding: {10+y_off}px {10-x_off}px {10-y_off}px {10+x_off}px; }}")
     def stop_shake(self): self.shake_timer.stop(); self.img_container.setStyleSheet("QLabel { background-color: white; border-radius: 12px; border: 1px solid #ecf0f1; padding: 10px; }")
 
-# ============================================================================
-# DIALOGUES DE CONFIGURATION (PRIX & EXPORT)
-# ============================================================================
 class PrixDialog(BaseDialog):
     def __init__(self, parent):
         super().__init__(parent, "Configuration Prix", 350, 200)
@@ -304,16 +270,12 @@ class PrixDialog(BaseDialog):
         try:
             p = float(self.entry.text().replace(',', '.'))
             if p <= 0: raise ValueError
-            
             db.set_ticket_price(p)
-            
-            # Mise à jour des soldes existants
             conn = db.get_connection()
             c = conn.cursor()
             c.execute("UPDATE usagers SET solde = ticket * ?", (p,))
             conn.commit()
             conn.close()
-            
             self.parent_app.load_data()
             self.accept()
         except ValueError: 
@@ -332,13 +294,16 @@ class ExportSupDialog(BaseDialog):
         h_toggle.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         
         self.toggle_switch = ToggleSwitch(inactive_color="#bdc3c7")
-        btn_label = QPushButton("Activer la copie de sauvegarde (ex: Clé USB)")
-        btn_label.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn_label.setStyleSheet("QPushButton { text-align: left; border: none; background-color: transparent; font-weight: bold; color: #2c3e50; font-size: 10pt; }")
-        btn_label.clicked.connect(self.toggle_switch.toggle)
+        
+        # --- MODIFICATION ICI ---
+        # On garde le bouton pour le texte cliquable, mais on le stocke dans self pour le modifier
+        self.btn_label = QPushButton("Activer la copie de sauvegarde (ex: Clé USB)")
+        self.btn_label.setCursor(Qt.CursorShape.PointingHandCursor)
+        # Le clic sur le texte active le toggle
+        self.btn_label.clicked.connect(self.toggle_switch.toggle)
         
         h_toggle.addWidget(self.toggle_switch)
-        h_toggle.addWidget(btn_label)
+        h_toggle.addWidget(self.btn_label)
         self.layout.addLayout(h_toggle)
         
         lbl_dest = QLabel("Dossier de destination :")
@@ -350,12 +315,10 @@ class ExportSupDialog(BaseDialog):
         self.inp_path = QLineEdit(db.get_config('EXPORT_SUP_PATH'))
         self.inp_path.setPlaceholderText("Chemin du dossier...")
         self.inp_path.setFixedHeight(45)
-        self.inp_path.setStyleSheet("QLineEdit { border: 1px solid #bdc3c7; border-radius: 4px; padding-left: 10px; background-color: #f9f9f9; } QLineEdit:focus { border: 2px solid #27ae60; }")
         
         self.btn_browse = QPushButton("📂")
         self.btn_browse.setFixedSize(60, 45)
         self.btn_browse.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_browse.setStyleSheet("QPushButton { background-color: #bdc3c7; border: none; border-radius: 4px; font-size: 16px; } QPushButton:hover { background-color: #a0a0a0; } QPushButton:disabled { background-color: #e0e0e0; }")
         self.btn_browse.clicked.connect(self.browse)
         
         h_path.addWidget(self.inp_path)
@@ -372,17 +335,28 @@ class ExportSupDialog(BaseDialog):
         h_btns.addWidget(self.btn_valid)
         self.layout.addLayout(h_btns)
         
-        self.toggle_switch.setChecked(db.get_config('EXPORT_SUP_ENABLED') == '1')
+        # Connexion du signal toggled
         self.toggle_switch.toggled.connect(self.toggle_inputs)
-        self.toggle_inputs(self.toggle_switch.isChecked())
+        
+        # Initialisation de l'état
+        is_enabled = db.get_config('EXPORT_SUP_ENABLED') == '1'
+        self.toggle_switch.setChecked(is_enabled)
+        # Force la mise à jour visuelle immédiate
+        self.toggle_inputs(is_enabled)
 
     def toggle_inputs(self, checked):
         self.inp_path.setEnabled(checked)
         self.btn_browse.setEnabled(checked)
-        if checked: 
+        
+        # --- GESTION COULEUR DU TEXTE ---
+        if checked:
+            # ACTIF : Texte foncé, Input blanc
+            self.btn_label.setStyleSheet("QPushButton { text-align: left; border: none; background: transparent; font-weight: bold; color: #2c3e50; font-size: 10pt; }")
             self.inp_path.setStyleSheet("QLineEdit { border: 1px solid #bdc3c7; border-radius: 4px; padding-left: 10px; background-color: white; color: black; } QLineEdit:focus { border: 2px solid #27ae60; }")
             self.btn_browse.setStyleSheet("QPushButton { background-color: #3498db; border: none; border-radius: 4px; font-size: 16px; color: white; } QPushButton:hover { background-color: #2980b9; }")
-        else: 
+        else:
+            # INACTIF : Texte gris, Input grisé
+            self.btn_label.setStyleSheet("QPushButton { text-align: left; border: none; background: transparent; font-weight: bold; color: #bdc3c7; font-size: 10pt; }")
             self.inp_path.setStyleSheet("QLineEdit { border: 1px solid #dcdcdc; border-radius: 4px; padding-left: 10px; background-color: #f0f0f0; color: #a0a0a0; }")
             self.btn_browse.setStyleSheet("QPushButton { background-color: #e0e0e0; border: none; border-radius: 4px; font-size: 16px; color: #a0a0a0; }")
 
@@ -400,9 +374,6 @@ class ExportSupDialog(BaseDialog):
         db.set_config('EXPORT_SUP_PATH', self.inp_path.text().strip())
         self.accept()
 
-# ============================================================================
-# DIALOGUE D'IMPORTATION EN MASSE
-# ============================================================================
 class ImportMasseDialog(BaseDialog):
     def __init__(self, parent):
         super().__init__(parent, "Importation en masse", 500, 500)
@@ -535,9 +506,6 @@ class ImportMasseDialog(BaseDialog):
         finally: 
             conn.close()
 
-# ============================================================================
-# DIALOGUES GESTION USAGERS
-# ============================================================================
 class NouveauUsagerDialog(BaseDialog):
     def __init__(self, parent):
         super().__init__(parent, "Nouvel Usager", 400, 400)
@@ -609,8 +577,7 @@ class NouveauUsagerDialog(BaseDialog):
             # 1. Insertion de l'usager
             c.execute("INSERT INTO usagers (id,nom,prenom,sexe,statut,solde,ticket,passage,photo_filename, commentaire) VALUES (?,?,?,?,?,0,0,'','',?)", (nid, n, p, self.i_sex.currentText(), user_statut, self.i_com.text()))
             
-            # 2. Mise à jour config (CORRECTION : On utilise le même curseur 'c')
-            # Au lieu de : db.set_config('LAST_USED_ID', str(nid))
+            # 2. Mise à jour config
             c.execute("REPLACE INTO config (key, value) VALUES (?, ?)", ('LAST_USED_ID', str(nid)))
             
             # 3. Historique
@@ -932,3 +899,176 @@ class HistoriqueDialog(BaseDialog):
         self.layout.addSpacing(20)
         btn_close = ModernButton("FERMER", "#95a5a6", self.reject, 35, 6)
         self.layout.addWidget(btn_close)
+
+# ============================================================================
+# DIALOGUE DE RESTAURATION
+# ============================================================================
+class RestaurationDialog(BaseDialog):
+    def __init__(self, parent):
+        super().__init__(parent, "Gestion Base de Données & Maintenance", 600, 650)
+        self.parent_app = parent
+        
+        # ... (Le début de la classe reste identique jusqu'à la section Toggle Auto) ...
+        # (Copiez le code existant pour la liste des backups et le bouton restaurer)
+        lbl_titre_rest = QLabel("RESTAURATION DE SAUVEGARDE")
+        lbl_titre_rest.setStyleSheet("color: #2c3e50; font-weight: 800; font-size: 12pt; margin-top: 5px;")
+        lbl_titre_rest.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.layout.addWidget(lbl_titre_rest)
+
+        lbl_warn = QLabel("⚠️ Attention : Restaurer une sauvegarde écrasera les données actuelles.")
+        lbl_warn.setStyleSheet("color: #e74c3c; font-style: italic; margin-bottom: 5px;")
+        lbl_warn.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.layout.addWidget(lbl_warn)
+
+        self.list_widget = QTableWidget(0, 2)
+        self.list_widget.setHorizontalHeaderLabels(["Date", "Fichier"])
+        self.list_widget.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.list_widget.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self.list_widget.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.list_widget.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.list_widget.verticalHeader().setVisible(False)
+        self.list_widget.setFixedHeight(200)
+        self.layout.addWidget(self.list_widget)
+
+        self.backup_dir = db.get_config('EXPORT_SUP_PATH') 
+        self.backups = []
+        self.load_backups()
+
+        btn_restore = ModernButton("RESTAURER LA SÉLECTION", "#e74c3c", self.perform_restore, 35, 6)
+        self.layout.addWidget(btn_restore)
+
+        self.layout.addSpacing(15)
+        line = QFrame()
+        line.setFrameShape(QFrame.Shape.HLine)
+        line.setFrameShadow(QFrame.Shadow.Sunken)
+        line.setStyleSheet("background-color: #bdc3c7;")
+        self.layout.addWidget(line)
+        self.layout.addSpacing(15)
+
+        lbl_titre_maint = QLabel("MAINTENANCE & NETTOYAGE")
+        lbl_titre_maint.setStyleSheet("color: #2c3e50; font-weight: 800; font-size: 12pt;")
+        lbl_titre_maint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.layout.addWidget(lbl_titre_maint)
+        
+        lbl_desc = QLabel(
+            "Cette option supprime l'historique vieux de plus de 2 ans pour accélérer le logiciel.\n"
+            "Les comptes usagers et les soldes actuels ne sont PAS touchés."
+        )
+        lbl_desc.setStyleSheet("color: #7f8c8d; font-size: 10pt;")
+        lbl_desc.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lbl_desc.setWordWrap(True)
+        self.layout.addWidget(lbl_desc)
+
+        # --- SECTION TOGGLE MODIFIÉE ---
+        h_auto = QHBoxLayout()
+        h_auto.addStretch()
+        
+        self.toggle_auto = ToggleSwitch(inactive_color="#bdc3c7") # On s'assure que le toggle inactif est gris
+        self.lbl_auto_text = QLabel("Effectuer ce nettoyage automatiquement au démarrage")
+        self.lbl_auto_text.setCursor(Qt.CursorShape.PointingHandCursor)
+        
+        # ASTUCE : Rendre le QLabel cliquable en surchargeant mousePressEvent à la volée
+        # Cela évite de créer une sous-classe juste pour ça
+        self.lbl_auto_text.mousePressEvent = lambda event: self.toggle_auto.toggle()
+        
+        # Charger l'état actuel
+        is_auto = db.get_config('AUTO_CLEAN_ENABLED') == '1'
+        self.toggle_auto.setChecked(is_auto)
+        
+        # Connecter le toggle
+        self.toggle_auto.toggled.connect(self.on_toggle_auto)
+        
+        # Appliquer le style initial
+        self.update_auto_label_style(is_auto)
+
+        h_auto.addWidget(self.toggle_auto)
+        h_auto.addWidget(self.lbl_auto_text)
+        h_auto.addStretch()
+        self.layout.addLayout(h_auto)
+
+        self.layout.addSpacing(10)
+
+        btn_clean = ModernButton("LANCER LE NETTOYAGE MAINTENANT", "#e67e22", lambda: self.clean_db(silent=False), 35, 6)
+        self.layout.addWidget(btn_clean)
+
+        self.layout.addStretch()
+        
+        btn_close = ModernButton("FERMER", "#95a5a6", self.reject, 40, 6)
+        self.layout.addWidget(btn_close)
+
+    # ... (Méthodes load_backups et perform_restore inchangées) ...
+    def load_backups(self):
+        # (Garder le code existant)
+        if not self.backup_dir or not os.path.exists(self.backup_dir):
+            self.list_widget.setRowCount(0)
+            return
+        files = glob.glob(os.path.join(self.backup_dir, "backup_*.db"))
+        files.sort(key=os.path.getmtime, reverse=True)
+        self.list_widget.setRowCount(0)
+        self.backups = files
+        for f in files:
+            row = self.list_widget.rowCount()
+            self.list_widget.insertRow(row)
+            filename = os.path.basename(f)
+            try:
+                ts = os.path.getmtime(f)
+                display_date = datetime.fromtimestamp(ts).strftime("%d/%m/%Y à %Hh%M")
+            except: display_date = "Date inconnue"
+            self.list_widget.setItem(row, 0, QTableWidgetItem(display_date))
+            self.list_widget.setItem(row, 1, QTableWidgetItem(filename))
+
+    def perform_restore(self):
+        # (Garder le code existant)
+        sel = self.list_widget.selectionModel().selectedRows()
+        if not sel: return CustomMessageBox(self, "Erreur", "Veuillez sélectionner une ligne.", error=True).exec()
+        idx = sel[0].row()
+        selected_file = self.backups[idx]
+        if ConfirmationDialog(self, "Attention", "Toutes les données actuelles seront remplacées par cette sauvegarde.\nLe logiciel va redémarrer.\n\nContinuer ?").exec():
+            try:
+                if os.path.exists(DB_FILE): shutil.move(DB_FILE, f"{DB_FILE}.pre_restore")
+                shutil.copy2(selected_file, DB_FILE)
+                CustomMessageBox(self, "Succès", "Restauration terminée.\nLe logiciel va redémarrer.", success=True).exec()
+                subprocess.Popen([sys.executable] + sys.argv)
+                sys.exit()
+            except Exception as e:
+                if os.path.exists(f"{DB_FILE}.pre_restore"): shutil.move(f"{DB_FILE}.pre_restore", DB_FILE)
+                CustomMessageBox(self, "Erreur", f"Échec de la restauration : {e}", error=True).exec()
+
+    def on_toggle_auto(self, checked):
+        val = '1' if checked else '0'
+        db.set_config('AUTO_CLEAN_ENABLED', val)
+        self.update_auto_label_style(checked)
+
+    def update_auto_label_style(self, checked):
+        # --- MODIFICATION DE STYLE ICI ---
+        base_style = "font-size: 10pt; font-weight: bold;"
+        
+        if checked:
+            # ACTIF : Noir / Foncé
+            self.lbl_auto_text.setStyleSheet(f"{base_style} color: #2c3e50;")
+        else:
+            # INACTIF : Gris (Même couleur que le toggle inactif)
+            self.lbl_auto_text.setStyleSheet(f"{base_style} color: #bdc3c7;")
+
+    def clean_db(self, silent=False):
+        # (Garder le code existant)
+        try:
+            conn = db.get_connection()
+            c = conn.cursor()
+            c.execute("DELETE FROM historique_passages WHERE date_passage < date('now', '-2 years')")
+            deleted_count = c.rowcount 
+            conn.commit()
+            conn.execute("VACUUM")
+            conn.close()
+            if not silent:
+                if deleted_count > 0:
+                    CustomMessageBox(self, "Maintenance Terminée", f"Nettoyage effectué avec succès.\n{deleted_count} anciennes lignes supprimées.", success=True).exec()
+                else:
+                    CustomMessageBox(self, "Information", "La base de données est déjà propre.\nAucune donnée vieille de plus de 2 ans.", success=True).exec()
+            else:
+                print(f"[Auto-Clean] {deleted_count} lignes supprimées.")
+        except Exception as e:
+            if not silent:
+                CustomMessageBox(self, "Erreur", f"Erreur lors de la maintenance : {e}", error=True).exec()
+            else:
+                print(f"[Auto-Clean Error] {e}")

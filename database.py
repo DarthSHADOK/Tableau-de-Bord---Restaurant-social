@@ -10,73 +10,55 @@ def get_connection():
     return sqlite3.connect(DB_FILE, timeout=10)
 
 def init_db():
-    os.makedirs(DB_DIR, exist_ok=True)
-    
-    conn = get_connection()
+    conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     
-    # --- ACTIVATION DU MODE WAL (Magie anti-blocage) ---
-    # Permet la lecture et l'écriture simultanées
-    try:
-        c.execute("PRAGMA journal_mode=WAL")
-    except:
-        pass # Si échoue, on reste en mode classique
-        
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS usagers (
-            id INTEGER PRIMARY KEY, nom TEXT, prenom TEXT, sexe TEXT, 
-            statut TEXT, solde REAL, ticket INTEGER, passage TEXT, 
-            photo_filename TEXT
-        )
-    """)
+    # Création de la table Usagers
+    c.execute("""CREATE TABLE IF NOT EXISTS usagers (
+        id INTEGER PRIMARY KEY,
+        nom TEXT,
+        prenom TEXT,
+        sexe TEXT,
+        statut TEXT,
+        solde REAL,
+        ticket INTEGER,
+        passage TEXT,
+        photo_filename TEXT,
+        commentaire TEXT
+    )""")
     
-    # Migrations colonnes
-    c.execute("PRAGMA table_info(usagers)")
-    cols = [col[1] for col in c.fetchall()]
-    if 'commentaire' not in cols:
-        try: c.execute("ALTER TABLE usagers ADD COLUMN commentaire TEXT DEFAULT ''")
-        except: pass
-
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS historique_passages (
-            id INTEGER PRIMARY KEY AUTOINCREMENT, action TEXT, detail TEXT, 
-            sexe TEXT, date_passage DATE DEFAULT (date('now')), 
-            heure_passage TIME DEFAULT (time('now')), usager_id INTEGER
-        )
-    """)
+    # Création de la table Historique
+    c.execute("""CREATE TABLE IF NOT EXISTS historique_passages (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        action TEXT,
+        detail TEXT,
+        sexe TEXT,
+        usager_id INTEGER,
+        date_passage DATE,
+        heure_passage TEXT DEFAULT (time('now', 'localtime')),
+        statut_au_passage TEXT,
+        FOREIGN KEY(usager_id) REFERENCES usagers(id)
+    )""")
     
-    c.execute("PRAGMA table_info(historique_passages)")
-    columns = [info[1] for info in c.fetchall()]
-    if 'statut_au_passage' not in columns:
-        try: c.execute("ALTER TABLE historique_passages ADD COLUMN statut_au_passage TEXT DEFAULT 'INCONNU'")
-        except: pass
-
-    c.execute("DROP VIEW IF EXISTS view_conso_nettoyees")
-    c.execute("""
-        CREATE VIEW view_conso_nettoyees AS 
-        SELECT id, usager_id, date_passage, sexe, statut_au_passage, action, 
-        CASE WHEN action = 'Consommation ticket(s)' THEN CAST(detail AS INTEGER) ELSE 1 END as quantite 
-        FROM historique_passages 
-        WHERE action IN ('Consommation ticket(s)', 'PAYE', '1ERE_FOIS')
-    """)
-
-    c.execute("CREATE TABLE IF NOT EXISTS config (key TEXT PRIMARY KEY, value TEXT)") 
+    # Création de la table Config
+    c.execute("CREATE TABLE IF NOT EXISTS config (key TEXT PRIMARY KEY, value TEXT)")
     
-    default_configs = [
-        ('TICKET_PRICE', '0.5'), ('LAST_RESET', ''), 
-        ('EXPORT_SUP_ENABLED', '0'), ('EXPORT_SUP_PATH', ''), 
-        ('LAST_USED_ID', '0'), ('LAST_RUN_VERSION', '0.0.0'),
-        ('UPDATE_CHANNEL', 'stable')
+    # --- MISE A JOUR DES VALEURS PAR DÉFAUT ---
+    # J'ai ajouté 'AUTO_CLEAN_ENABLED' à la fin de la liste
+    defaults = [
+        ('TICKET_PRICE', '0.5'),
+        ('LAST_RESET', ''),
+        ('EXPORT_SUP_ENABLED', '0'),
+        ('EXPORT_SUP_PATH', ''),
+        ('LAST_USED_ID', '0'),
+        ('LAST_RUN_VERSION', '0.0.0'),
+        ('UPDATE_CHANNEL', 'stable'),
+        ('AUTO_CLEAN_ENABLED', '0')  # <--- NOUVELLE CLÉ
     ]
-    for k, v in default_configs:
+    
+    for k, v in defaults:
         c.execute("INSERT OR IGNORE INTO config (key, value) VALUES (?, ?)", (k, v))
-
-    c.execute("""
-        UPDATE historique_passages SET statut_au_passage = 'Tutelles' 
-        WHERE usager_id IN (SELECT id FROM usagers WHERE statut = 'Tutelles') 
-        AND statut_au_passage = 'Avances'
-    """)
-
+    
     conn.commit()
     conn.close()
 

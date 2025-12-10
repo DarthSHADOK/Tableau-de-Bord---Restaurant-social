@@ -43,7 +43,8 @@ from UI.dialogs import (
     NouveauUsagerDialog, ConsommerTicketDialog, RechargerCompteDialog,
     ModifierUsagerDialog, HistoriqueDialog, ConfirmationDialog,
     ExportSupDialog, ImportMasseDialog, PrixDialog, AProposDialog,
-    ChangelogDialog, CustomMessageBox, PdfSuccessDialog
+    ChangelogDialog, CustomMessageBox, PdfSuccessDialog,
+    RestaurationDialog 
 )
 
 # Workers et Logique Métier (Dossier Core)
@@ -158,7 +159,7 @@ class MainWindow(QMainWindow):
         # --- TIMERS ---
         self.search_timer = QTimer()
         self.search_timer.setSingleShot(True)
-        self.search_timer.setInterval(600)
+        self.search_timer.setInterval(300) 
         self.search_timer.timeout.connect(self.load_data)
         
         self.blink_timer = QTimer()
@@ -202,6 +203,7 @@ class MainWindow(QMainWindow):
         self.move(qr.topLeft())
 
         self.check_monthly_reset()
+        
         self.load_data()
         self.refresh_counters()
         self.update_stats()
@@ -209,10 +211,10 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(1000, self.check_changelog)
         QTimer.singleShot(3000, self.check_updates)
         
-        # --- LANCEMENT BACKUP AUTO ---
         self.perform_startup_backup()
+        self.check_auto_maintenance()
 
-    # --- LOGIQUE BACKUP & SPINNER ---
+    # --- LOGIQUE BACKUP & MAINTENANCE ---
     def perform_startup_backup(self):
         try:
             backup_enabled = db.get_config('EXPORT_SUP_ENABLED') == '1'
@@ -234,7 +236,21 @@ class MainWindow(QMainWindow):
         if success: print(f"Backup terminé : {message}")
         else: print(f"Echec du backup : {message}")
 
-    # --- LOGIQUE PDF AVEC SPINNER ---
+    def check_auto_maintenance(self):
+        if db.get_config('AUTO_CLEAN_ENABLED') == '1':
+            try:
+                conn = db.get_connection()
+                c = conn.cursor()
+                c.execute("DELETE FROM historique_passages WHERE date_passage < date('now', '-2 years')")
+                if c.rowcount > 0:
+                    print(f"Maintenance Auto: {c.rowcount} lignes supprimées.")
+                    conn.commit()
+                    conn.execute("VACUUM")
+                conn.close()
+            except Exception as e:
+                print(f"Erreur Maintenance Auto: {e}")
+
+    # --- LOGIQUE PDF ---
     def generate_pdf(self, secondary_path=None, silent_mode=False):
         if hasattr(self, 'backup_spinner'):
             self.backup_spinner.start()
@@ -284,7 +300,6 @@ class MainWindow(QMainWindow):
                 if sys.platform == 'win32': os.startfile(pdf_path)
                 else: subprocess.call(['xdg-open', pdf_path])
                 
-                # Fonction de suppression temporaire
                 t = threading.Thread(target=monitor_and_delete, args=(pdf_path,), daemon=True)
                 t.start()
         except Exception as e:
@@ -449,36 +464,31 @@ class MainWindow(QMainWindow):
         except Exception as e: 
             QMessageBox.critical(self, "Erreur", f"Impossible de lancer la mise à jour:\n{e}")
 
+    def open_restore_dialog(self):
+        if db.get_config('EXPORT_SUP_ENABLED') != '1':
+            return CustomMessageBox(self, "Sauvegardes inactives", 
+                "Le système de sauvegarde automatique n'est pas activé.\n\n"
+                "Allez dans 'Forcer Export PDF' (Clic Droit) pour configurer un dossier de sauvegarde.", 
+                error=True).exec()
+        
+        backup_path = db.get_config('EXPORT_SUP_PATH')
+        if not backup_path or not os.path.exists(backup_path):
+             return CustomMessageBox(self, "Erreur Dossier", 
+                "Le dossier de sauvegarde configuré est introuvable.", 
+                error=True).exec()
+
+        RestaurationDialog(self).exec()
+
     # --- ACTIONS UTILISATEUR & UI HELPERS ---
-    
     def update_undo_redo_buttons(self):
-        """Met à jour l'état des boutons Annuler/Rétablir."""
         can_undo = len(self.undo_manager.undo_stack) > 0
         can_redo = len(self.undo_manager.redo_stack) > 0
-        
         c_undo = "#e74c3c" if can_undo else "#95a5a6"
         c_redo = "#27ae60" if can_redo else "#95a5a6"
-        
         for btn, color, active in [(self.btn_undo, c_undo, can_undo), (self.btn_redo, c_redo, can_redo)]:
             btn.setEnabled(active)
             hover_color = btn.adjust_color(color, -45)
-            btn.setStyleSheet(f"""
-                QPushButton {{ 
-                    background-color: {color}; 
-                    color: white; 
-                    border-radius: 6px; 
-                    font-weight: bold; 
-                    border: none; 
-                    font-size: 9pt; 
-                }}
-                QPushButton:hover {{ 
-                    background-color: {hover_color}; 
-                }}
-                QPushButton:disabled {{ 
-                    background-color: #95a5a6; 
-                    color: #bdc3c7; 
-                }}
-            """)
+            btn.setStyleSheet(f"""QPushButton {{ background-color: {color}; color: white; border-radius: 6px; font-weight: bold; border: none; font-size: 9pt; }} QPushButton:hover {{ background-color: {hover_color}; }} QPushButton:disabled {{ background-color: #95a5a6; color: #bdc3c7; }}""")
 
     def get_selected_id(self):
         r = self.table.selectionModel().selectedRows()
@@ -578,33 +588,6 @@ class MainWindow(QMainWindow):
         self.update_stats()
         self.generate_pdf(silent_mode=True)
 
-    def trigger_update_download(self, dialog_ref):
-        url = "https://github.com/DarthSHADOK/Tableau-de-Bord---Restaurant-social/releases/latest/download/GestionResto.exe" 
-        temp_path = os.path.join(tempfile.gettempdir(), "GestionResto_new.exe")
-        self.dl_worker = DownloadWorker(url, temp_path)
-        self.dl_worker.progress.connect(dialog_ref.update_progress)
-        self.dl_worker.finished.connect(self.confirm_install)
-        self.dl_worker.error.connect(lambda err: QMessageBox.critical(self, "Erreur", f"Échec du téléchargement: {err}"))
-        self.dl_worker.start()
-
-    def confirm_install(self, downloaded_file):
-        dlg = CustomMessageBox(self, "Mise à jour prête", "Le téléchargement est terminé.\nVoulez-vous fermer l'application et installer la mise à jour maintenant ?")
-        if dlg.exec(): self.apply_update(downloaded_file)
-
-    def apply_update(self, downloaded_file):
-        try:
-            current_exe = sys.executable
-            if not getattr(sys, 'frozen', False): 
-                QMessageBox.information(self, "Mode Dev", f"Mise à jour simulée.\nFichier : {downloaded_file}")
-                return
-            batch_script = os.path.join(os.path.dirname(current_exe), "update.bat")
-            with open(batch_script, "w") as f:
-                f.write(f"""@echo off\ntimeout /t 2 /nobreak > NUL\ndel "{current_exe}"\nmove "{downloaded_file}" "{current_exe}"\nstart "" "{current_exe}"\ndel "%~f0"\n""")
-            subprocess.Popen([batch_script], shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
-            QApplication.quit()
-        except Exception as e: 
-            QMessageBox.critical(self, "Erreur", f"Impossible de lancer la mise à jour:\n{e}")
-
     # --- CONSTRUCTION UI (PARTIES) ---
     def add_sep(self, layout): 
         f=QFrame()
@@ -617,7 +600,6 @@ class MainWindow(QMainWindow):
         l.setContentsMargins(20, 20, 20, 20)
         l.setSpacing(3)
         
-        # --- TITRE MODIFIÉ (Avec Spinner) ---
         h_title = QHBoxLayout()
         h_title.setSpacing(10)
         lbl_title = QLabel("TABLEAU DE BORD", styleSheet="color:white; font-weight:bold; font-size:11pt;")
@@ -730,7 +712,11 @@ class MainWindow(QMainWindow):
         l.addWidget(self.lbl_count)
         
         l.addSpacing(10)
+        
         self.btn_about = RoundedLabelButton("À PROPOS", "#34495e", "white", self.open_about, 30, 4, centered=True)
+        self.btn_about.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.btn_about.customContextMenuRequested.connect(self.open_restore_dialog)
+        
         l.addWidget(self.btn_about)
 
     def add_filter_row(self, layout, text, color, key=None):
@@ -1054,13 +1040,38 @@ class MainWindow(QMainWindow):
     def remove_accents(self, input_str): 
         return "".join([c for c in unicodedata.normalize('NFD', input_str) if not unicodedata.combining(c)]).upper() if input_str else ""
 
+    def calculate_match_score(self, search_text, uid, nom, prenom):
+        if not search_text: return 100
+        
+        search_clean = search_text
+        if str(uid) == search_clean: return 100
+            
+        n_clean = self.remove_accents(nom)
+        p_clean = self.remove_accents(prenom)
+        full_name = f"{n_clean} {p_clean}"
+        inv_name = f"{p_clean} {n_clean}"
+        
+        if n_clean.startswith(search_clean) or p_clean.startswith(search_clean): return 95
+        if full_name.startswith(search_clean) or inv_name.startswith(search_clean): return 90
+        if search_clean in full_name or search_clean in inv_name: return 70
+            
+        ratio_n = SequenceMatcher(None, search_clean, n_clean).ratio()
+        ratio_p = SequenceMatcher(None, search_clean, p_clean).ratio()
+        ratio_f = SequenceMatcher(None, search_clean, full_name).ratio()
+        best_ratio = max(ratio_n, ratio_p, ratio_f)
+        
+        if best_ratio > 0.6: return int(best_ratio * 60)
+        return 0
+
     def load_data(self):
         self.table.setUpdatesEnabled(False)
         self.table.setSortingEnabled(False)
         self.table.setRowCount(0)
+        
         try:
-            search_text = self.search.text().strip().upper()
-            search_clean = self.remove_accents(search_text)
+            raw_search = self.search.text().strip()
+            search_clean = self.remove_accents(raw_search)
+            is_searching = len(search_clean) > 0
             
             conn = db.get_connection()
             try:
@@ -1071,7 +1082,7 @@ class MainWindow(QMainWindow):
                 conn.close()
             
             bg_map = {"Payés": AppColors.ROW_PAYE, "Avances": AppColors.ROW_AVANCE, "Tutelles": AppColors.ROW_TUTELLE, "Pas de crédit": AppColors.ROW_NOCREDIT}
-            matches = []
+            display_list = []
             
             for r in rows:
                 uid, n, p, s, st, sol, tick, passg = r[:8]
@@ -1085,34 +1096,21 @@ class MainWindow(QMainWindow):
                 
                 if not self.filters.get(real_st, True): continue
                 if not self.filters.get(s, True): continue
+                
                 is_positive = calc_sol >= 0
                 is_negative = calc_sol < 0
                 if not self.filters.get("Positif", True) and is_positive: continue
                 if not self.filters.get("Négatif", True) and is_negative: continue
                 
-                score = 0
-                if not search_text: score = 1.0
-                else:
-                    n_clean = self.remove_accents(n)
-                    p_clean = self.remove_accents(p)
-                    full_name = f"{n_clean} {p_clean}"
-                    inverse_name = f"{p_clean} {n_clean}"
+                score = self.calculate_match_score(search_clean, uid, n, p)
+                if is_searching and score == 0: continue
                     
-                    if search_clean in n_clean or search_clean in p_clean or search_clean in full_name: score = 1.0
-                    else:
-                        r_n = SequenceMatcher(None, search_clean, n_clean).ratio()
-                        r_p = SequenceMatcher(None, search_clean, p_clean).ratio()
-                        r_f = SequenceMatcher(None, search_clean, full_name).ratio()
-                        r_i = SequenceMatcher(None, search_clean, inverse_name).ratio()
-                        score = max(r_n, r_p, r_f, r_i)
-                
-                if score > 0.4: 
-                    matches.append((score, r, real_st, calc_sol, bg_map.get(real_st, "white")))
+                display_list.append((score, n, r, real_st, calc_sol, bg_map.get(real_st, "white")))
             
-            matches.sort(key=lambda x: (x[0], x[1][1]), reverse=True)
+            display_list.sort(key=lambda x: (-x[0], x[1]))
+            
             vis = 0
-            
-            for score, r, real_st, calc_sol, bg_color in matches:
+            for score, name_sort, r, real_st, calc_sol, bg_color in display_list:
                 vis += 1
                 uid, n, p, s, st, sol, tick, passg = r[:8]
                 comment = r[9] if len(r) > 9 else ""
@@ -1126,20 +1124,19 @@ class MainWindow(QMainWindow):
                 items_list = [uid, n, p, s, real_st, f"{calc_sol:.2f} €", tick, comment, passg]
                 
                 for i, val in enumerate(items_list):
-                    if i in [0, 5, 6]: 
-                        it = NumericTableWidgetItem(str(val))
-                    else: 
-                        it = QTableWidgetItem(str(val))
+                    if i in [0, 5, 6]: it = NumericTableWidgetItem(str(val))
+                    else: it = QTableWidgetItem(str(val))
                     
                     it.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                     it.setBackground(bg)
                     it.setToolTip(tooltip_text)
                     self.table.setItem(idx, i, it)
             
-            self.table.setSortingEnabled(True)
             self.lbl_count.setText(f"{vis} usager(s) visible(s)")
             self.refresh_counters()
-        finally: 
+            self.table.setSortingEnabled(not is_searching)
+            
+        finally:
             self.table.setUpdatesEnabled(True)
 
 # ============================================================================
