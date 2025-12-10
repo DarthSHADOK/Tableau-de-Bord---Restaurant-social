@@ -4,7 +4,7 @@ import os
 # ============================================================================
 # 1. VERSIONS ET DEPENDANCES
 # ============================================================================
-APP_VERSION = "1.1.2"
+APP_VERSION = "1.1.3-beta"
 
 # URL pour la dernière version STABLE uniquement
 UPDATE_URL = "https://api.github.com/repos/DarthSHADOK/Tableau-de-Bord---Restaurant-social/releases/latest"

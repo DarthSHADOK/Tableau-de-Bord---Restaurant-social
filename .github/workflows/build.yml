@@ -26,17 +26,18 @@ jobs:
         pip install -r requirements.txt
         pip install pyinstaller
 
-    # 1. COMPILATION EN MODE DOSSIER (--onedir)
-    # Cela crée un dossier "dist/GestionResto/" contenant l'exe et les libs.
+    # 1. COMPILATION HYBRIDE (DOSSIER)
     - name: Build with PyInstaller
       run: |
         pyinstaller --onedir --noconsole --name GestionResto --add-data "Images;Images" --add-data "db;db" main.py
 
-    # 2. RELEASE : ON NE PREND QUE LE .EXE
-    # On va chercher le fichier spécifiquement à l'intérieur du dossier créé
+    # 2. RELEASE INTELLIGENTE
+    # On publie uniquement le .exe léger.
+    # ET on détecte automatiquement si c'est une Bêta grâce au nom du tag.
     - name: Release
       uses: softprops/action-gh-release@v1
       if: startsWith(github.ref, 'refs/tags/')
       with:
-        # C'est ici la subtilité : on ne prend PAS tout le dossier, juste l'exe léger
         files: dist/GestionResto/GestionResto.exe
+        # Si le tag contient "-beta", ça devient une Pré-release automatiquement
+        prerelease: ${{ contains(github.ref, '-beta') }}

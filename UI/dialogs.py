@@ -2,6 +2,7 @@ import sqlite3
 import random
 import os
 from datetime import datetime
+from Core.workers import UpdateWorker
 
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, 
@@ -143,191 +144,143 @@ class ChangelogDialog(BaseDialog):
 # ============================================================================
 class AProposDialog(BaseDialog):
     def __init__(self, parent, update_available=None, download_callback=None):
-        super().__init__(parent, "À Propos", 420, 650) # Hauteur augmentée pour le sélecteur
+        super().__init__(parent, "À Propos", 420, 650)
         self.download_callback = download_callback
         self.layout.setContentsMargins(30, 30, 30, 30)
-        self.layout.setSpacing(0) 
+        self.layout.setSpacing(0)
         
-        # Image / Animation
+        # --- Image Shadok (Inchangé) ---
         self.img_container = QLabel()
         self.img_container.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.img_container.setFixedSize(340, 250) 
+        self.img_container.setFixedSize(340, 250)
         self.img_container.setCursor(Qt.CursorShape.PointingHandCursor)
         self.img_container.installEventFilter(self)
         self.img_container.setStyleSheet(f"QLabel {{ background-color: white; border-radius: 12px; border: 1px solid #ecf0f1; }}")
         
-        if os.path.exists(SHADOK_GIF_PATH): 
+        if os.path.exists(SHADOK_GIF_PATH):
             self.movie = QMovie(SHADOK_GIF_PATH)
             self.movie.setScaledSize(QSize(180, 240))
             self.img_container.setMovie(self.movie)
             self.movie.start()
-        else: 
+        else:
             self.img_container.setText("🦆")
             
-        h_img = QHBoxLayout()
-        h_img.addStretch()
-        h_img.addWidget(self.img_container)
-        h_img.addStretch()
-        self.layout.addLayout(h_img)
-        self.layout.addSpacing(25)
+        h_img = QHBoxLayout(); h_img.addStretch(); h_img.addWidget(self.img_container); h_img.addStretch()
+        self.layout.addLayout(h_img); self.layout.addSpacing(25)
         
-        # Titre
+        # --- Titre (Inchangé) ---
         lbl_title = QLabel(f"<div style='line-height: 120%;'><span style='font-size: 16pt; font-weight: 800; color: {AppColors.MENU_BG};'>TABLEAU DE BORD</span><br><span style='font-size: 13pt; font-weight: 600; color: {AppColors.STATS_BG};'>RESTAURANT SOCIAL</span></div>")
         lbl_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.layout.addWidget(lbl_title)
-        self.layout.addSpacing(15)
+        self.layout.addWidget(lbl_title); self.layout.addSpacing(15)
         
-        # --- SÉLECTEUR DE CANAL DE MISE À JOUR ---
+        # --- Sélecteur de Canal (Inchangé) ---
         lbl_channel = QLabel("Canal de mise à jour :")
         lbl_channel.setStyleSheet("color: #7f8c8d; font-size: 10pt;")
         
         self.combo_channel = QComboBox()
         self.combo_channel.addItems(["Stable (Recommandé)", "Bêta (Test)"])
         self.combo_channel.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.combo_channel.setStyleSheet(f"""
-            QComboBox {{ border: 1px solid #bdc3c7; border-radius: 4px; padding: 2px 10px; color: {AppColors.MENU_BG}; }}
-            QComboBox:focus {{ border: 2px solid {AppColors.BTN_EXPORT_BG}; }}
-        """)
+        self.combo_channel.setStyleSheet(f"QComboBox {{ border: 1px solid #bdc3c7; border-radius: 4px; padding: 2px 10px; color: {AppColors.MENU_BG}; }} QComboBox:focus {{ border: 2px solid {AppColors.BTN_EXPORT_BG}; }}")
         
-        # Charger la config actuelle
         current_channel = db.get_config('UPDATE_CHANNEL', 'stable')
-        if current_channel == 'beta':
-            self.combo_channel.setCurrentIndex(1)
-        else:
-            self.combo_channel.setCurrentIndex(0)
+        if current_channel == 'beta': self.combo_channel.setCurrentIndex(1)
+        else: self.combo_channel.setCurrentIndex(0)
             
         self.combo_channel.currentIndexChanged.connect(self.on_channel_change)
         
-        h_chan = QHBoxLayout()
-        h_chan.addStretch()
-        h_chan.addWidget(lbl_channel)
-        h_chan.addWidget(self.combo_channel)
-        h_chan.addStretch()
+        h_chan = QHBoxLayout(); h_chan.addStretch(); h_chan.addWidget(lbl_channel); h_chan.addWidget(self.combo_channel); h_chan.addStretch()
+        self.layout.addLayout(h_chan); self.layout.addSpacing(15)
         
-        self.layout.addLayout(h_chan)
-        self.layout.addSpacing(15)
-        # -----------------------------------------
-
-        # Version
-        h_ver = QHBoxLayout()
-        h_ver.setSpacing(10)
-        h_ver.addStretch()
-        lbl_ver = QLabel(f"Version {APP_VERSION}")
-        lbl_ver.setStyleSheet("background-color: #ecf0f1; color: #7f8c8d; border-radius: 10px; padding: 4px 15px; font-size: 10pt; font-weight: bold;")
-        h_ver.addWidget(lbl_ver)
+        # --- Version et Boutons (MODIFIÉ POUR ÊTRE DYNAMIQUE) ---
+        h_ver = QHBoxLayout(); h_ver.setSpacing(10); h_ver.addStretch()
         
+        # On garde le label de version en mémoire pour afficher "Recherche..."
+        self.lbl_ver = QLabel(f"Version {APP_VERSION}")
+        self.lbl_ver.setStyleSheet("background-color: #ecf0f1; color: #7f8c8d; border-radius: 10px; padding: 4px 15px; font-size: 10pt; font-weight: bold;")
+        h_ver.addWidget(self.lbl_ver)
+        
+        ### NOUVEAU : On crée les widgets MAIS on les cache si pas besoin
+        self.lbl_arrow = QLabel("➜")
+        self.lbl_arrow.setStyleSheet("color: #95a5a6; font-size: 14pt; font-weight: bold;")
+        h_ver.addWidget(self.lbl_arrow)
+        
+        self.btn_update = QPushButton("") # Texte vide pour l'instant
+        self.btn_update.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_update.setStyleSheet(f"background-color: {AppColors.BTN_NEW_BG}; color: white; border-radius: 10px; padding: 4px 15px; font-size: 10pt; font-weight: bold; border: none;")
+        self.btn_update.clicked.connect(self.start_download)
+        h_ver.addWidget(self.btn_update)
+        
+        # Gestion de l'état initial
         if update_available:
-            lbl_arrow = QLabel("➜")
-            lbl_arrow.setStyleSheet("color: #95a5a6; font-size: 14pt; font-weight: bold;")
-            h_ver.addWidget(lbl_arrow)
-            
-            btn_update = QPushButton(f"v{update_available}")
-            btn_update.setCursor(Qt.CursorShape.PointingHandCursor)
-            btn_update.setStyleSheet(f"background-color: {AppColors.BTN_NEW_BG}; color: white; border-radius: 10px; padding: 4px 15px; font-size: 10pt; font-weight: bold; border: none;")
-            btn_update.clicked.connect(self.start_download)
-            h_ver.addWidget(btn_update)
-            
-        h_ver.addStretch()
-        self.layout.addLayout(h_ver)
-        self.layout.addSpacing(20)
-        
-        # Barre de progression
-        self.progress_bar = QLabel("")
-        self.progress_bar.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.progress_bar.setStyleSheet("color: #27ae60; font-weight: bold;")
-        self.progress_bar.setVisible(False)
-        self.layout.addWidget(self.progress_bar)
-        
-        sep = QFrame()
-        sep.setFixedHeight(1)
-        sep.setStyleSheet("background-color: #e0e0e0;")
-        self.layout.addWidget(sep)
-        self.layout.addSpacing(15)
-        
-        # Crédits
-        v_credits = QVBoxLayout()
-        v_credits.setSpacing(4)
-        lbl_dev = QLabel("Développement & Conception")
-        lbl_dev.setStyleSheet("color: #95a5a6; font-size: 8pt; text-transform: uppercase; letter-spacing: 1px;")
-        lbl_dev.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        
-        lbl_dev_name = QLabel("SHaDoK")
-        lbl_dev_name.setStyleSheet(f"color: {AppColors.MENU_BG}; font-size: 11pt; font-weight: bold; margin-bottom: 2px;")
-        lbl_dev_name.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        
-        sujet = "Demande de support pour l'application Tableau de bord - Restaurant Social"
-        sujet_encoded = sujet.replace(" ", "%20").replace("'", "%27")
-        lbl_support = QLabel(f"Support : <a href='mailto:jesthp@gmail.com?subject={sujet_encoded}' style='color: #3498db; text-decoration: none; font-weight:bold;'>jesthp@gmail.com</a>")
-        lbl_support.setOpenExternalLinks(True)
-        lbl_support.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        lbl_support.setStyleSheet("font-size: 10pt; color: #7f8c8d;")
-        
-        v_credits.addWidget(lbl_dev)
-        v_credits.addWidget(lbl_dev_name)
-        v_credits.addWidget(lbl_support)
-        self.layout.addLayout(v_credits)
-        self.layout.addStretch()
-        
-        btn_close = ModernButton("FERMER", "#95a5a6", self.accept, 40, 6)
-        h_btn = QHBoxLayout()
-        h_btn.setContentsMargins(60, 0, 60, 0)
-        h_btn.addWidget(btn_close)
-        self.layout.addLayout(h_btn)
-        
-        # Setup Animation Shake
-        self.shake_timer = QTimer(self)
-        self.shake_timer.timeout.connect(self.do_shake)
-        self.shake_duration_timer = QTimer(self)
-        self.shake_duration_timer.setSingleShot(True)
-        self.shake_duration_timer.timeout.connect(self.stop_shake)
-        self.start_vibration_sequence()
-
-    def on_channel_change(self):
-        idx = self.combo_channel.currentIndex()
-        new_channel = "beta" if idx == 1 else "stable"
-        
-        # 1. Sauvegarder
-        db.set_config('UPDATE_CHANNEL', new_channel)
-        
-        # 2. Informer
-        msg = "Le canal a été modifié.\n"
-        if new_channel == "beta":
-            msg += "Vous recevrez désormais les versions de test.\nAttention, elles peuvent être instables."
+            self.btn_update.setText(f"v{update_available}")
+            self.lbl_arrow.setVisible(True)
+            self.btn_update.setVisible(True)
         else:
-            msg += "Vous êtes revenu au canal stable.\nSi votre version actuelle est une Bêta, une 'mise à jour' vers la Stable vous sera proposée."
+            self.lbl_arrow.setVisible(False)
+            self.btn_update.setVisible(False)
             
-        CustomMessageBox(self, "Changement de canal", msg).exec()
+        h_ver.addStretch(); self.layout.addLayout(h_ver); self.layout.addSpacing(20)
+        
+        # --- Barre de progression (Inchangé) ---
+        self.progress_bar = QLabel(""); self.progress_bar.setAlignment(Qt.AlignmentFlag.AlignCenter); self.progress_bar.setStyleSheet("color: #27ae60; font-weight: bold;"); self.progress_bar.setVisible(False)
+        self.layout.addWidget(self.progress_bar); sep = QFrame(); sep.setFixedHeight(1); sep.setStyleSheet("background-color: #e0e0e0;"); self.layout.addWidget(sep); self.layout.addSpacing(15)
+        
+        # --- Crédits (Inchangé) ---
+        v_credits = QVBoxLayout(); v_credits.setSpacing(4)
+        lbl_dev = QLabel("Développement & Conception"); lbl_dev.setStyleSheet("color: #95a5a6; font-size: 8pt; text-transform: uppercase; letter-spacing: 1px;"); lbl_dev.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lbl_dev_name = QLabel("SHaDoK"); lbl_dev_name.setStyleSheet(f"color: {AppColors.MENU_BG}; font-size: 11pt; font-weight: bold; margin-bottom: 2px;"); lbl_dev_name.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        sujet = "Demande de support pour l'application Tableau de bord - Restaurant Social"; sujet_encoded = sujet.replace(" ", "%20").replace("'", "%27")
+        lbl_support = QLabel(f"Support : <a href='mailto:jesthp@gmail.com?subject={sujet_encoded}' style='color: #3498db; text-decoration: none; font-weight:bold;'>jesthp@gmail.com</a>"); lbl_support.setOpenExternalLinks(True); lbl_support.setAlignment(Qt.AlignmentFlag.AlignCenter); lbl_support.setStyleSheet("font-size: 10pt; color: #7f8c8d;")
+        v_credits.addWidget(lbl_dev); v_credits.addWidget(lbl_dev_name); v_credits.addWidget(lbl_support); self.layout.addLayout(v_credits); self.layout.addStretch()
+        
+        btn_close = ModernButton("FERMER", "#95a5a6", self.accept, 40, 6); h_btn = QHBoxLayout(); h_btn.setContentsMargins(60, 0, 60, 0); h_btn.addWidget(btn_close); self.layout.addLayout(h_btn)
+        
+        self.shake_timer = QTimer(self); self.shake_timer.timeout.connect(self.do_shake); self.shake_duration_timer = QTimer(self); self.shake_duration_timer.setSingleShot(True); self.shake_duration_timer.timeout.connect(self.stop_shake); self.start_vibration_sequence()
 
-    def start_download(self): 
-        self.progress_bar.setVisible(True)
-        self.progress_bar.setText("Initialisation...")
-        if self.download_callback:
-            self.download_callback(self)
+    ### NOUVEAU : Logique de mise à jour instantanée ###
+    
+    def on_channel_change(self, index):
+        """Sauvegarde ET lance la recherche instantanément"""
+        channel = 'beta' if index == 1 else 'stable'
+        db.set_config('UPDATE_CHANNEL', channel)
+        
+        # 1. On cache les anciens boutons et on montre que ça cherche
+        self.lbl_arrow.setVisible(False)
+        self.btn_update.setVisible(False)
+        self.lbl_ver.setText("Recherche en cours...")
+        self.lbl_ver.setStyleSheet("background-color: #f39c12; color: white; border-radius: 10px; padding: 4px 15px; font-size: 10pt; font-weight: bold;")
+        
+        # 2. On lance un worker temporaire juste pour cette fenêtre
+        self.temp_worker = UpdateWorker(channel=channel)
+        self.temp_worker.update_available.connect(self.on_new_version_found)
+        self.temp_worker.finished.connect(self.on_search_finished)
+        self.temp_worker.start()
 
-    def update_progress(self, percent): 
-        self.progress_bar.setText(f"Téléchargement : {percent}%")
+    def on_new_version_found(self, version):
+        """Si le worker trouve une version"""
+        self.lbl_arrow.setVisible(True)
+        self.btn_update.setText(f"v{version}")
+        self.btn_update.setVisible(True)
 
+    def on_search_finished(self):
+        """Quand la recherche est finie (trouvé ou pas)"""
+        # On remet le texte normal de la version
+        self.lbl_ver.setText(f"Version {APP_VERSION}")
+        self.lbl_ver.setStyleSheet("background-color: #ecf0f1; color: #7f8c8d; border-radius: 10px; padding: 4px 15px; font-size: 10pt; font-weight: bold;")
+        
+        # Note : Si 'on_new_version_found' a été appelé avant, le bouton restera visible.
+        # Sinon, il restera caché. C'est le comportement voulu.
+
+    # --- Méthodes existantes (Inchangées) ---
+    def start_download(self): self.progress_bar.setVisible(True); self.progress_bar.setText("Initialisation..."); self.download_callback(self) if self.download_callback else None
+    def update_progress(self, percent): self.progress_bar.setText(f"Téléchargement : {percent}%")
     def eventFilter(self, source, event): 
         if source == self.img_container and event.type() == QEvent.Type.MouseButtonDblClick:
-            self.start_vibration_sequence()
-            return True
+            self.start_vibration_sequence(); return True
         return super().eventFilter(source, event)
-
-    def start_vibration_sequence(self): 
-        self.shake_timer.stop()
-        self.shake_duration_timer.stop()
-        self.shake_timer.start(40)
-        self.shake_duration_timer.start(1500)
-
-    def do_shake(self): 
-        range_px = 4
-        x_off = random.randint(-range_px, range_px)
-        y_off = random.randint(-range_px, range_px)
-        self.img_container.setStyleSheet(f"QLabel {{ background-color: white; border-radius: 12px; border: 1px solid #ecf0f1; padding: {10+y_off}px {10-x_off}px {10-y_off}px {10+x_off}px; }}")
-
-    def stop_shake(self): 
-        self.shake_timer.stop()
-        self.img_container.setStyleSheet("QLabel { background-color: white; border-radius: 12px; border: 1px solid #ecf0f1; padding: 10px; }")
+    def start_vibration_sequence(self): self.shake_timer.stop(); self.shake_duration_timer.stop(); self.shake_timer.start(40); self.shake_duration_timer.start(1500)
+    def do_shake(self): range_px = 4; x_off = random.randint(-range_px, range_px); y_off = random.randint(-range_px, range_px); self.img_container.setStyleSheet(f"QLabel {{ background-color: white; border-radius: 12px; border: 1px solid #ecf0f1; padding: {10+y_off}px {10-x_off}px {10-y_off}px {10+x_off}px; }}")
+    def stop_shake(self): self.shake_timer.stop(); self.img_container.setStyleSheet("QLabel { background-color: white; border-radius: 12px; border: 1px solid #ecf0f1; padding: 10px; }")
 
 # ============================================================================
 # DIALOGUES DE CONFIGURATION (PRIX & EXPORT)

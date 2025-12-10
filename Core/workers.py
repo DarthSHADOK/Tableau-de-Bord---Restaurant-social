@@ -14,47 +14,50 @@ from constants import APP_VERSION, UPDATE_URL, ALL_RELEASES_URL
 # ============================================================================
 # WORKER : VÉRIFICATION DE MISE À JOUR
 # ============================================================================
-class UpdateWorker(QThread):
-    """
-    Vérifie en arrière-plan si une nouvelle tag est disponible sur GitHub.
-    Accepte un canal (stable ou beta).
-    """
-    update_available = pyqtSignal(str) 
+# Dans Core/workers.py
 
-    def __init__(self, channel="stable"):
+class UpdateWorker(QThread):
+    update_available = pyqtSignal(str) 
+    
+    # On ajoute le paramètre 'channel' dans l'init
+    def __init__(self, channel='stable'):
         super().__init__()
         self.channel = channel
 
     def run(self):
         try:
+            # Configuration SSL pour éviter les erreurs de certificat
             ctx = ssl.create_default_context()
             ctx.check_hostname = False
             ctx.verify_mode = ssl.CERT_NONE
             
-            # Choix de l'URL selon le canal
-            if self.channel == "beta":
-                target_url = ALL_RELEASES_URL
+            base_url = "https://api.github.com/repos/DarthSHADOK/Tableau-de-Bord---Restaurant-social/releases"
+            
+            # --- LOGIQUE DE SÉLECTION SELON LE CANAL ---
+            if self.channel == 'beta':
+                # MODE BÊTA : On récupère la LISTE complète sans filtre
+                req = urllib.request.Request(base_url, headers={'User-Agent': 'GestionRestoApp'})
+                with urllib.request.urlopen(req, timeout=10, context=ctx) as response:
+                    releases_list = json.loads(response.read().decode('utf-8'))
+                
+                # On prend la première de la liste (la plus récente en date)
+                if releases_list and len(releases_list) > 0:
+                    data = releases_list[0]
+                else:
+                    return 
             else:
-                target_url = UPDATE_URL
-            
-            req = urllib.request.Request(target_url, headers={'User-Agent': 'GestionRestoApp'})
-            
-            with urllib.request.urlopen(req, timeout=10, context=ctx) as response:
-                data = json.loads(response.read().decode('utf-8'))
-            
-            online_version = ""
-            
-            if self.channel == "beta":
-                # L'API 'releases' renvoie une LISTE
-                if isinstance(data, list) and len(data) > 0:
-                    online_version = data[0].get("tag_name", "").strip()
-            else:
-                # L'API 'releases/latest' renvoie un DICTIONNAIRE
-                online_version = data.get("tag_name", "").strip()
-            
+                # MODE STABLE : On demande "/latest" (GitHub filtre les bêtas)
+                req = urllib.request.Request(f"{base_url}/latest", headers={'User-Agent': 'GestionRestoApp'})
+                with urllib.request.urlopen(req, timeout=10, context=ctx) as response:
+                    data = json.loads(response.read().decode('utf-8'))
+
+            # Analyse de la version
+            online_version = data.get("tag_name", "").strip()
             if online_version.lower().startswith('v'): 
                 online_version = online_version[1:]
             
+            # Comparaison avec la version actuelle (importée depuis constants)
+            # Assure-toi d'avoir "from constants import APP_VERSION" en haut du fichier
             if online_version and online_version != APP_VERSION: 
                 self.update_available.emit(online_version)
                 
