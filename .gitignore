@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+build/
+dist/
+*.spec
+venv/
+.env
+sav/
+push_git.sh
+*.pdf
