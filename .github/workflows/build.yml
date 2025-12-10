@@ -1,0 +1,68 @@
+name: Build Application Windows
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    # UTILISATION DE PYTHON 3.14 (Votre environnement)
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.14' 
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pyinstaller
+        pip install psutil
+
+    # 1. COMPILATION DE L'UPDATER (Mode Fichier Unique)
+    # Il doit être autonome pour fonctionner pendant la mise à jour.
+    - name: Build Updater
+      run: |
+        pyinstaller --noconsole --onefile --clean --name updater updater.py
+
+    # 2. COMPILATION DE L'APPLICATION (Mode Dossier)
+    # On utilise --contents-directory pour ranger les DLLs dans "Systeme"
+    - name: Build Main App
+      run: |
+        pyinstaller --noconsole --onedir --clean --name GestionResto --add-data "Images;Images" --contents-directory=Systeme main.py
+
+    # 3. INTÉGRATION DE L'UPDATER
+    # On prend l'updater compilé à l'étape 1 et on le met dans le dossier Systeme de l'étape 2
+    - name: Move Updater to System Folder
+      run: |
+        Move-Item -Path dist\updater.exe -Destination dist\GestionResto\Systeme\
+
+    # 4. MASQUAGE (Finition Pro)
+    # On cache le dossier Systeme pour que l'utilisateur ne voie que l'exe principal
+    - name: Hide System Folder
+      run: |
+        attrib +h dist/GestionResto/Systeme
+
+    # 5. CRÉATION DU ZIP (Le paquet final)
+    # On zippe le dossier "dist/GestionResto" qui contient maintenant TOUT (App + Systeme + Updater)
+    - name: Zip the Build
+      run: |
+        powershell Compress-Archive -Path dist/GestionResto -DestinationPath dist/GestionResto.zip
+
+    # 6. RELEASE SUR GITHUB
+    # On envoie le ZIP. L'application (via workers.py) saura le télécharger et l'installer.
+    - name: Release
+      uses: softprops/action-gh-release@v1
+      if: startsWith(github.ref, 'refs/tags/')
+      with:
+        files: dist/GestionResto.zip
+        prerelease: ${{ contains(github.ref, '-beta') }}
