@@ -196,13 +196,12 @@ class AProposDialog(BaseDialog):
         self.btn_update.clicked.connect(self.start_download)
         h_ver.addWidget(self.btn_update)
         
+        # État initial
+        self.lbl_arrow.setVisible(False)
+        self.btn_update.setVisible(False)
+
         if update_available:
-            self.btn_update.setText(f"v{update_available}")
-            self.lbl_arrow.setVisible(True)
-            self.btn_update.setVisible(True)
-        else:
-            self.lbl_arrow.setVisible(False)
-            self.btn_update.setVisible(False)
+            self.on_new_version_found(update_available)
             
         h_ver.addStretch(); self.layout.addLayout(h_ver); self.layout.addSpacing(20)
         
@@ -223,23 +222,32 @@ class AProposDialog(BaseDialog):
     def on_channel_change(self, index):
         channel = 'beta' if index == 1 else 'stable'
         db.set_config('UPDATE_CHANNEL', channel)
+        
+        # Réinitialisation de l'affichage : On cache le bouton update
         self.lbl_arrow.setVisible(False)
         self.btn_update.setVisible(False)
-        self.lbl_ver.setText("Recherche en cours...")
+        
+        # Indicateur de recherche
+        self.lbl_ver.setText("Recherche...")
         self.lbl_ver.setStyleSheet("background-color: #f39c12; color: white; border-radius: 10px; padding: 4px 15px; font-size: 10pt; font-weight: bold;")
+        
+        # Lancement Worker
         self.temp_worker = UpdateWorker(channel=channel)
         self.temp_worker.update_available.connect(self.on_new_version_found)
         self.temp_worker.finished.connect(self.on_search_finished)
         self.temp_worker.start()
 
     def on_new_version_found(self, version):
+        # On n'affiche le bouton QUE si ce signal est émis
         self.lbl_arrow.setVisible(True)
         self.btn_update.setText(f"v{version}")
         self.btn_update.setVisible(True)
 
     def on_search_finished(self):
+        # Fin de la recherche : On remet le texte de version actuelle
         self.lbl_ver.setText(f"Version {APP_VERSION}")
         self.lbl_ver.setStyleSheet("background-color: #ecf0f1; color: #7f8c8d; border-radius: 10px; padding: 4px 15px; font-size: 10pt; font-weight: bold;")
+        # Note : Si 'update_available' n'a pas été émis, le bouton reste caché (setVisible(False) dans on_channel_change)
 
     def start_download(self): self.progress_bar.setVisible(True); self.progress_bar.setText("Initialisation..."); self.download_callback(self) if self.download_callback else None
     def update_progress(self, percent): self.progress_bar.setText(f"Téléchargement : {percent}%")
@@ -525,8 +533,32 @@ class NouveauUsagerDialog(BaseDialog):
         self.i_com = QLineEdit()
         self.i_com.setPlaceholderText("Ex: Tuteur M. X")
         
+        # --- CORRECTIF APPLIQUÉ ICI ---
+        # On définit un style qui force le QMenu (clic droit) en sombre
+        # car sinon il hérite du fond blanc des QLineEdit
+        style_champs = f"""
+            QLineEdit, QComboBox {{ 
+                padding: 5px; 
+                background: #ffffff; 
+                border: 2px solid #bdc3c7; 
+                color: black; 
+                border-radius: 6px; 
+            }} 
+            QLineEdit:focus, QComboBox:focus {{ 
+                border: 2px solid #e67e22; 
+            }}
+            QMenu {{
+                background-color: {AppColors.MENU_BG};
+                color: white;
+                border: 1px solid #7f8c8d;
+            }}
+            QMenu::item:selected {{
+                background-color: {AppColors.FOCUS_ORANGE};
+            }}
+        """
+        
         for w in [self.i_nom, self.i_pre, self.i_sex, self.i_sta, self.i_com]: 
-            w.setStyleSheet("QLineEdit, QComboBox { padding: 5px; background: #ffffff; border: 2px solid #bdc3c7; color: black; border-radius: 6px; } QLineEdit:focus, QComboBox:focus { border: 2px solid #e67e22; }")
+            w.setStyleSheet(style_champs)
         
         def add_row(row_idx, label_text, widget):
             lbl = QLabel(label_text)
@@ -641,8 +673,30 @@ class ModifierUsagerDialog(BaseDialog):
         self.inp_solde = QLineEdit(f"{self.data[4]:.2f}")
         self.inp_com = QLineEdit(self.data[5] if self.data[5] else "")
         
+        # --- CORRECTIF APPLIQUÉ ICI ---
+        style_champs = f"""
+            QLineEdit, QComboBox {{ 
+                padding: 5px; 
+                background: #ffffff; 
+                border: 2px solid #bdc3c7; 
+                color: black; 
+                border-radius: 6px; 
+            }} 
+            QLineEdit:focus, QComboBox:focus {{ 
+                border: 2px solid #e67e22; 
+            }}
+            QMenu {{
+                background-color: {AppColors.MENU_BG};
+                color: white;
+                border: 1px solid #7f8c8d;
+            }}
+            QMenu::item:selected {{
+                background-color: {AppColors.FOCUS_ORANGE};
+            }}
+        """
+        
         for w in [self.inp_nom, self.inp_prenom, self.inp_sexe, self.inp_statut, self.inp_solde, self.inp_com]: 
-            w.setStyleSheet("QLineEdit, QComboBox { padding: 5px; background: #ffffff; border: 2px solid #bdc3c7; color: black; border-radius: 6px; } QLineEdit:focus, QComboBox:focus { border: 2px solid #e67e22; }")
+            w.setStyleSheet(style_champs)
         
         def add_row(row_idx, label_text, widget):
             lbl = QLabel(label_text)

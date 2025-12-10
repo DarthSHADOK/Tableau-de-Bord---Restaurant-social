@@ -6,3 +6,4 @@ dist/
 venv/
 .env
 sav
+push_git.sh

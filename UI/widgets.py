@@ -17,44 +17,24 @@ from constants import AppColors
 # SPINNER DE CHARGEMENT (CERCLE ROTATIF)
 # ============================================================================
 class StatusSpinner(QLabel):
-    """
-    Indicateur d'activité discret (Rotation).
-    CORRIGÉ : Reste toujours visible (mais vide) pour ne pas décaler l'interface.
-    """
     def __init__(self, parent=None):
         super().__init__(parent)
-        
-        # 1. TAILLE FIXE
         self.setFixedSize(20, 20)
-        
-        # 2. STYLE
         self.setStyleSheet(f"color: {AppColors.FOCUS_ORANGE}; font-weight: bold; font-size: 12pt; font-family: 'Segoe UI Symbol', 'Arial';")
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        
-        # 3. ANIMATION (Style Radar)
         self.chars = ["◐", "◓", "◑", "◒"]
         self._idx = 0
-        
         self.timer = QTimer(self)
         self.timer.setInterval(120)
         self.timer.timeout.connect(self._rotate)
-        
-        # IMPORTANT : On ne cache PAS le widget. On met juste un texte vide.
-        # Ainsi, l'espace de 20x20 pixels est toujours réservé dans la barre.
         self.setText("") 
 
     def _rotate(self):
         self.setText(self.chars[self._idx])
         self._idx = (self._idx + 1) % len(self.chars)
 
-    def start(self):
-        # On lance juste l'animation, l'espace est déjà là
-        self.timer.start()
-
-    def stop(self):
-        self.timer.stop()
-        # On vide le texte pour le rendre "invisible" sans supprimer l'espace
-        self.setText("")
+    def start(self): self.timer.start()
+    def stop(self): self.timer.stop(); self.setText("")
 
 # ============================================================================
 # TABLE ITEM (TRI NUMÉRIQUE)

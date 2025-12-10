@@ -16,13 +16,13 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
     QLabel, QFrame, QLineEdit, QTableWidget, QTableWidgetItem, 
     QHeaderView, QAbstractItemView, QCheckBox, QMessageBox, QMenu, 
-    QSizePolicy, QFileDialog, QDateEdit, QPushButton
+    QSizePolicy, QFileDialog, QDateEdit, QPushButton, QToolTip
 )
 from PyQt6.QtCore import (
     Qt, QTimer, QByteArray, QSize, QDate
 )
 from PyQt6.QtGui import (
-    QColor, QIcon, QPixmap, QAction
+    QColor, QIcon, QPixmap, QAction, QPalette
 )
 
 # --- IMPORTS LOCAUX ---
@@ -111,7 +111,6 @@ class UndoManager:
         self.app.refresh_counters()
         self.app.update_stats()
         self.app.generate_pdf(silent_mode=True)
-        self.app.update_undo_redo_buttons()
 
     def _apply_state(self, state_data, delete_history_ids=None):
         conn = db.get_connection()
@@ -743,6 +742,8 @@ class MainWindow(QMainWindow):
 
     def setup_center(self):
         l = QVBoxLayout(self.frame_center)
+        
+        # --- En-tête (Titre + Recherche) ---
         h = QHBoxLayout()
         h.addWidget(QLabel("LISTE DES USAGERS", styleSheet="font-size:14pt; font-weight:bold; color:#2c3e50;"))
         h.addStretch()
@@ -754,7 +755,41 @@ class MainWindow(QMainWindow):
         
         self.search = QLineEdit()
         self.search.setPlaceholderText("🔍 Rechercher...")
-        self.search.setStyleSheet("border:none; background:transparent; padding:5px; color:#2c3e50;")
+        
+        # Style spécifique pour la barre de recherche et son menu contextuel
+        self.search.setStyleSheet(f"""
+            QLineEdit {{
+                border: none; 
+                background: transparent; 
+                padding: 5px; 
+                color: #2c3e50;
+            }}
+            QMenu {{
+                background-color: {AppColors.MENU_BG};
+                color: white;
+                border: 1px solid #bdc3c7;
+                border-radius: 6px;
+                padding: 5px 0px;
+            }}
+            QMenu::item {{
+                padding: 6px 30px;
+                background: transparent;
+            }}
+            QMenu::item:selected {{
+                background-color: {AppColors.FOCUS_ORANGE};
+                color: white;
+            }}
+            QMenu::item:disabled {{
+                color: #95a5a6;
+                background-color: transparent;
+                font-style: italic;
+            }}
+            QMenu::separator {{
+                height: 1px;
+                background: {AppColors.SEPARATOR};
+                margin: 5px 0px;
+            }}
+        """)
         self.search.textChanged.connect(self.search_timer.start)
         
         bc = QPushButton("✖")
@@ -767,6 +802,7 @@ class MainWindow(QMainWindow):
         h.addWidget(f)
         l.addLayout(h)
         
+        # --- Tableau des Usagers ---
         self.table = QTableWidget(0, 9)
         self.table.setHorizontalHeaderLabels(["ID","NOM","PRENOM","SEXE","STATUT","SOLDE","TICKET", "COMMENTAIRE", "DERNIER PASSAGE"])
         self.table.verticalHeader().setVisible(False)
@@ -1172,6 +1208,14 @@ if __name__ == "__main__":
     app.setStyle("Fusion")
     
     app.setStyleSheet(GLOBAL_STYLESHEET)
+    
+    # --- DOUBLE VERIFICATION : Forçage de la Palette pour QToolTip ---
+    # Cette étape garantit que le fond est sombre et le texte blanc, même si le CSS échoue
+    palette = QToolTip.palette()
+    palette.setColor(QPalette.ColorRole.ToolTipBase, QColor(AppColors.MENU_BG))
+    palette.setColor(QPalette.ColorRole.ToolTipText, QColor(Qt.GlobalColor.white))
+    QToolTip.setPalette(palette)
+    # ----------------------------------------------------------------
     
     if os.path.exists(ICON_PATH): 
         app.setWindowIcon(QIcon(ICON_PATH))

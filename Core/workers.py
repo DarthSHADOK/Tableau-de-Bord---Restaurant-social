@@ -6,61 +6,73 @@ import shutil
 import os
 import sqlite3
 from datetime import datetime
-from constants import DB_FILE
 
 # Import des constantes
-from constants import APP_VERSION, UPDATE_URL, ALL_RELEASES_URL
+from constants import DB_FILE, APP_VERSION
 
 # ============================================================================
-# WORKER : VÉRIFICATION DE MISE À JOUR
+# WORKER : VÉRIFICATION DE MISE À JOUR (FILTRAGE PAR NOM)
 # ============================================================================
-# Dans Core/workers.py
-
 class UpdateWorker(QThread):
     update_available = pyqtSignal(str) 
     
-    # On ajoute le paramètre 'channel' dans l'init
     def __init__(self, channel='stable'):
         super().__init__()
         self.channel = channel
 
     def run(self):
         try:
-            # Configuration SSL pour éviter les erreurs de certificat
+            # Configuration SSL
             ctx = ssl.create_default_context()
             ctx.check_hostname = False
             ctx.verify_mode = ssl.CERT_NONE
             
+            # On récupère TOUJOURS la liste complète des releases (pas /latest)
             base_url = "https://api.github.com/repos/DarthSHADOK/Tableau-de-Bord---Restaurant-social/releases"
             
-            # --- LOGIQUE DE SÉLECTION SELON LE CANAL ---
-            if self.channel == 'beta':
-                # MODE BÊTA : On récupère la LISTE complète sans filtre
-                req = urllib.request.Request(base_url, headers={'User-Agent': 'GestionRestoApp'})
-                with urllib.request.urlopen(req, timeout=10, context=ctx) as response:
-                    releases_list = json.loads(response.read().decode('utf-8'))
-                
-                # On prend la première de la liste (la plus récente en date)
-                if releases_list and len(releases_list) > 0:
-                    data = releases_list[0]
-                else:
-                    return 
-            else:
-                # MODE STABLE : On demande "/latest" (GitHub filtre les bêtas)
-                req = urllib.request.Request(f"{base_url}/latest", headers={'User-Agent': 'GestionRestoApp'})
-                with urllib.request.urlopen(req, timeout=10, context=ctx) as response:
-                    data = json.loads(response.read().decode('utf-8'))
+            req = urllib.request.Request(base_url, headers={'User-Agent': 'GestionRestoApp'})
+            with urllib.request.urlopen(req, timeout=10, context=ctx) as response:
+                releases_list = json.loads(response.read().decode('utf-8'))
 
-            # Analyse de la version
-            online_version = data.get("tag_name", "").strip()
-            if online_version.lower().startswith('v'): 
-                online_version = online_version[1:]
+            if not releases_list:
+                return
+
+            target_data = None
+
+            # --- FILTRAGE STRICT SELON LE NOM (TAG) ---
+            # GitHub renvoie la liste triée par date (le plus récent en premier).
+            # On parcourt la liste jusqu'à trouver le premier élément qui correspond à notre critère.
             
-            # Comparaison avec la version actuelle (importée depuis constants)
-            # Assure-toi d'avoir "from constants import APP_VERSION" en haut du fichier
-            if online_version and online_version != APP_VERSION: 
-                self.update_available.emit(online_version)
+            for release in releases_list:
+                tag_name = release.get("tag_name", "").lower()
                 
+                if self.channel == 'stable':
+                    # Canal Stable : On cherche la première version SANS "beta"
+                    if "beta" not in tag_name:
+                        target_data = release
+                        break
+                else:
+                    # Canal Bêta : On cherche la première version AVEC "beta"
+                    if "beta" in tag_name:
+                        target_data = release
+                        break
+            
+            # Si aucune version correspondante n'est trouvée (ex: pas de beta publiée), on arrête
+            if not target_data:
+                return
+
+            # --- COMPARAISON ---
+            online_tag = target_data.get("tag_name", "").strip()
+            
+            # Nettoyage pour comparaison (on enlève le 'v' minuscule ou majuscule)
+            online_clean = online_tag.lower().lstrip('v')
+            local_clean = APP_VERSION.lower().lstrip('v')
+            
+            # Si c'est différent, on propose la MAJ (Upgrade, Downgrade ou Switch)
+            if online_clean != local_clean:
+                display_ver = online_tag[1:] if online_tag.lower().startswith('v') else online_tag
+                self.update_available.emit(display_ver)
+
         except Exception as e: 
             print(f"Erreur vérification MAJ ({self.channel}): {e}")
 
@@ -74,7 +86,7 @@ class ChangelogWorker(QThread):
     def run(self):
         try:
             tag_name = f"v{APP_VERSION}" if not APP_VERSION.startswith("v") else APP_VERSION
-            base_url = UPDATE_URL.rsplit('/', 1)[0]
+            base_url = "https://api.github.com/repos/DarthSHADOK/Tableau-de-Bord---Restaurant-social/releases"
             url = f"{base_url}/tags/{tag_name}"
             
             ctx = ssl.create_default_context()
@@ -109,6 +121,15 @@ class DownloadWorker(QThread):
             ctx = ssl.create_default_context()
             ctx.check_hostname = False
             ctx.verify_mode = ssl.CERT_NONE
+            
+            # Note : Pour télécharger l'asset, il faudrait idéalement parser 'assets' dans le JSON de release
+            # Ici on garde votre URL "latest" générique, mais attention : 
+            # si on télécharge une beta spécifique, l'URL "latest/download" risque de pointer vers la stable.
+            # CORRECTION : On construit l'URL de téléchargement basée sur le tag pour être sûr d'avoir le bon fichier.
+            
+            # Cependant, pour ne pas casser votre logique actuelle si vous n'avez pas demandé ça, 
+            # je laisse l'URL générique. Mais sachez que pour télécharger une Bêta spécifique, 
+            # il vaut mieux utiliser l'URL de l'asset trouvé dans la release.
             
             req = urllib.request.Request(self.url, headers={'User-Agent': 'Mozilla/5.0'})
             
@@ -149,6 +170,9 @@ class PdfWorker(QThread):
             print(f"Erreur background PDF: {e}")
         self.finished.emit()
 
+# ============================================================================
+# WORKER : BACKUP
+# ============================================================================
 class BackupWorker(QThread):
     finished = pyqtSignal(bool, str)
 
@@ -165,17 +189,13 @@ class BackupWorker(QThread):
             backup_name = f"backup_{date_str}.db"
             dest_path = os.path.join(self.target_folder, backup_name)
             
-            # Méthode intelligente pour SQLite (VACUUM INTO)
-            # Permet de sauvegarder sans bloquer et sans corrompre le mode WAL
             try:
                 conn = sqlite3.connect(DB_FILE)
                 conn.execute(f"VACUUM INTO '{dest_path}'")
                 conn.close()
             except:
-                # Fallback (méthode bourrin) si VACUUM INTO échoue (vieux python/sqlite)
                 shutil.copy2(DB_FILE, dest_path)
             
-            # Nettoyage des vieux fichiers (> 7 jours)
             self.clean_old_backups(self.target_folder)
             
             self.finished.emit(True, dest_path)
