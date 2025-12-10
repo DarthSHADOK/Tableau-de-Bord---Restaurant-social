@@ -1,0 +1,58 @@
+name: Build GestionResto
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Install Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Build GestionResto.exe (onedir)
+        run: |
+          pyinstaller --noconfirm --onedir --name GestionResto.exe gestionresto.py
+
+      - name: Build Updater.exe (onedir)
+        run: |
+          pyinstaller --noconfirm --onedir --name Updater.exe updater.py
+
+      - name: Create Systeme folder
+        run: |
+          mkdir Systeme
+          # Copier les fichiers du dossier "dist" vers "Systeme"
+          # On place aussi Updater.exe dedans
+          robocopy dist\GestionResto.exe\ Systeme /E
+          robocopy dist\Updater.exe\ Systeme\Updater.exe /E
+
+      - name: Prepare ZIP structure
+        run: |
+          mkdir Release
+          # Le fichier GestionResto.exe doit être À LA RACINE de l’archive
+          copy dist\GestionResto.exe\GestionResto.exe Release\
+          # Le dossier Systeme doit contenir tout le reste
+          robocopy Systeme Release\Systeme /E
+
+      - name: Create ZIP archive
+        run: |
+          powershell Compress-Archive -Path Release\* -DestinationPath GestionResto.zip -Force
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: Build-GestionResto
+          path: GestionResto.zip
