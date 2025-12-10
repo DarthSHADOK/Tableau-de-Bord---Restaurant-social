@@ -1,0 +1,89 @@
+name: Build GestionResto (Final Structure)
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      # ==========================================================
+      # 1. Build GestionResto (onedir)
+      # Structure PyInstaller native :
+      # dist/GestionResto/
+      #    GestionResto.exe
+      #    (toutes les DLL + data)
+      # ==========================================================
+      - name: Build GestionResto.exe
+        run: |
+          pyinstaller --noconsole --onedir --name GestionResto main.py
+
+      # ==========================================================
+      # 2. Build Updater (onedir)
+      # dist/updater/
+      #    updater.exe
+      #    (DLL + libs updater)
+      # ==========================================================
+      - name: Build Updater.exe
+        run: |
+          pyinstaller --noconsole --onedir --name Updater updater.py
+
+      # ==========================================================
+      # 3. Structure finale :
+      #
+      # dist/Final/
+      #    GestionResto.exe
+      #    Systeme/
+      #        (DLL + assets GestionResto)
+      #        Updater/
+      #            Updater.exe + DLL updater
+      # ==========================================================
+      - name: Build Final Structure
+        run: |
+          New-Item -ItemType Directory -Path dist/Final | Out-Null
+          New-Item -ItemType Directory -Path dist/Final/Systeme | Out-Null
+
+          # Copier l'EXE principal dans la racine
+          Copy-Item dist/GestionResto/GestionResto.exe dist/Final/
+
+          # Copier les DLL + assets dans Systeme
+          Copy-Item dist/GestionResto/* dist/Final/Systeme/ -Recurse -Force -Exclude "GestionResto.exe"
+
+          # Créer un sous-dossier Updater dans Systeme
+          New-Item -ItemType Directory -Path dist/Final/Systeme/Updater | Out-Null
+
+          # Copier Updater (exe + dépendances) dans Systeme/Updater
+          Copy-Item dist/Updater/* dist/Final/Systeme/Updater/ -Recurse -Force
+
+      # ==========================================================
+      # 4. ZIP
+      # ==========================================================
+      - name: Create ZIP
+        run: |
+          Set-Location dist/Final
+          Compress-Archive -Path * -DestinationPath ../GestionResto.zip -Force
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: GestionResto.zip
+          path: dist/GestionResto.zip
